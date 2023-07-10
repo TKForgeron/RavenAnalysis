@@ -1,4 +1,11 @@
+"""
+The main goal of this code is to process and transform data from multiple Excel files into
+a comprehensive behavioral analysis matrix. The primary steps include reading the Excel files,
+cleaning the data, calculating behavior statistics, pivoting data, and merging the resulting DataFrames.
+"""
+
 import functools as ft
+import os
 
 import numpy as np
 import pandas as pd
@@ -18,10 +25,30 @@ import pandas as pd
 # u[2] alleen de waarde van Modifier #1 pakken (als het goed is komt u[2] altijd 1x voor per observatie)
 # u[3] opdelen in u[3] high en u[3] low. waarde van low staat aangegeven in Comment kolom. als Comment leeg: ga uit van LOW
 
-observations_in_file = "/data/processed/all_observations.csv"
+
+# Specify the output file path for the intermediary full dataset and processed data
+intermediate_output_file = os.getcwd() + "/data/processed/all_observations.csv"
 processed_out_file = "data/processed/full_raven_behavior_matrix.xlsx"
 
-df = pd.read_csv(observations_in_file)
+# Specify the directory path containing the files
+path = os.getcwd() + "/data/raw"
+
+# Get the list of files in the directory with extension "xlsx"
+files = os.listdir(path)
+files_xls = [f"{path}/{f}" for f in files if f[-4:] == "xlsx"]
+
+# Initialize an empty DataFrame
+df = pd.DataFrame()
+
+# Iterate through the files and concatenate data to the DataFrame
+for f in files_xls:
+    # Read data from each Excel file using the "openpyxl" engine
+    data = pd.read_excel(f, 0, engine="openpyxl")
+    # Concatenate the data to the existing DataFrame
+    df = pd.concat([df, data], axis=0)
+
+# Save the concatenated DataFrame to a CSV file
+df.to_csv(intermediate_output_file, index=False, sep=";")
 
 
 # append given/received to behavior, and do groupby aggregations again
@@ -171,17 +198,13 @@ observation_neighbor_stats["Modifier #1"] = (
 )
 
 # Create "neighbor_matrix" using pivot_table function
-neighbor_matrix = (
-    pd.pivot_table(
-        observation_neighbor_stats,
-        index="Observation id",
-        columns="Behavior",
-        values="Modifier #1",
-        aggfunc=np.min,
-    )
-    .fillna(0)
-    .replace({10: ">10"})
-)
+neighbor_matrix = pd.pivot_table(
+    observation_neighbor_stats,
+    index="Observation id",
+    columns="Behavior",
+    values="Modifier #1",
+    aggfunc=np.min,
+).fillna(0)
 
 
 # Select rows with "Behavior" as "Group size" and specific columns
@@ -200,10 +223,14 @@ group_size_per_observation = group_size_per_observation.pivot(
 
 
 # Extract "Social calls - High" and "Social calls - Low" values from "Comment" column
-df[["Social calls - High", "Social calls - Low"]] = df.loc[
+extracted_values = df.loc[
     df["Behavior"] == "Social calls",
     "Comment",
 ].str.extract(r"High: (\d+)\nLow: (\d+)", expand=True)
+
+# Assign the extracted values to the columns
+df.loc[df["Behavior"] == "Social calls", "Social calls - High"] = extracted_values[0]
+df.loc[df["Behavior"] == "Social calls", "Social calls - Low"] = extracted_values[1]
 
 # Mask to identify rows where "Behavior" is "Social calls" and "Comment" is NaN
 social_calls_mask = (df["Behavior"] == "Social calls") & df["Comment"].isna()
@@ -248,6 +275,9 @@ full_raven_behavior_matrix = ft.reduce(
     lambda left, right: pd.merge(left, right, on="Observation id", how="left"), dfs
 )
 full_raven_behavior_matrix = full_raven_behavior_matrix.fillna(0)
+full_raven_behavior_matrix = (
+    full_raven_behavior_matrix.set_index("Observation id").astype(float).reset_index()
+)
 
 
 full_raven_behavior_matrix.to_excel(
